@@ -819,6 +819,9 @@ void bhv_koopa_update(void) {
     obj_face_yaw_approach(o->oMoveAngleYaw, 0x600);
 }
 
+#include "course_table.h"
+#include "port/net/SatellaApi.h"
+
 /**
  * Update function for bhvKoopaRaceEndpoint.
  */
@@ -826,7 +829,9 @@ void bhv_koopa_race_endpoint_update(void) {
     if (o->oKoopaRaceEndpointRaceBegun && !o->oKoopaRaceEndpointRaceEnded) {
         if (o->oKoopaRaceEndpointKoopaFinished || o->oDistanceToMario < 400.0f) {
             o->oKoopaRaceEndpointRaceEnded = TRUE;
-            level_control_timer(TIMER_CONTROL_STOP);
+            // STOP only halts the HUD timer; it returns the final frame count
+            // (frames @ 30fps) without zeroing it. Capture it for submission.
+            u16 koopaTime = level_control_timer(TIMER_CONTROL_STOP);
 
             if (!o->oKoopaRaceEndpointKoopaFinished) {
                 play_race_fanfare();
@@ -834,6 +839,13 @@ void bhv_koopa_race_endpoint_update(void) {
                     o->oKoopaRaceEndpointRaceStatus = -1;
                 } else {
                     o->oKoopaRaceEndpointRaceStatus = 1;
+#ifdef USE_NETWORKING
+                    // Fair win (no cannon). The race endpoint object does not store
+                    // which Koopa it belongs to, so BOB vs THI comes from the course.
+                    Satella_SubmitRaceTime(
+                        (gCurrCourseNum == COURSE_THI) ? SATELLA_COURSE_THI : SATELLA_COURSE_BOB,
+                        koopaTime);
+#endif
                 }
             }
         }

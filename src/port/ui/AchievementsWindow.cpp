@@ -101,7 +101,7 @@ void DrawAchievementCard(const std::pair<const std::string, Achievement>& achPai
     ImGui::PopID();
 }
 
-void AchievementsWindow::DrawElement() {
+void DrawAchievementsGrid() {
     int cols = 2;
     float spacing = ImGui::GetStyle().ItemSpacing.x;
     float cardWidth = (ImGui::GetContentRegionAvail().x / cols) - (spacing * 0.5f);
@@ -126,4 +126,8 @@ void AchievementsWindow::DrawElement() {
         }
     }
     ImGui::EndGroup();
+}
+
+void AchievementsWindow::DrawElement() {
+    DrawAchievementsGrid();
 }

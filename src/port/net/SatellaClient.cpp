@@ -13,9 +13,13 @@
 #include <ixwebsocket/IXWebSocket.h>
 
 #include "port/net/PlayerIdentity.h"
+#include "port/net/SatellaAuth.h"
+#include "port/ui/SatellaWindow.h"
 
 #include <chrono>
 #include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -57,9 +61,53 @@ static std::vector<uint8_t> buildRequest(const char* route) {
     return packet;
 }
 
+// HM64 + JSON type + route + JSON body. Used by the blocking RequestJson path
+// (Satella data calls migrated off the REST layer).
+static std::vector<uint8_t> buildJsonRequest(const std::string& route, const std::string& body) {
+    std::vector<uint8_t> packet;
+    const char magic[] = "HM64";
+    for (int i = 0; i < 4; ++i) {
+        packet.push_back(static_cast<uint8_t>(magic[i]));
+    }
+    packet.push_back(0x02); // JSON
+    writeU32LE(packet, static_cast<uint32_t>(route.size()));
+    for (char c : route) {
+        packet.push_back(static_cast<uint8_t>(c));
+    }
+    packet.insert(packet.end(), body.begin(), body.end());
+    return packet;
+}
+
 Client& Client::Instance() {
     static Client instance;
     return instance;
+}
+
+// Live-leaderboard cache (written by the WS push, read by the in-game tab).
+static std::mutex sLbMtx;
+static std::map<std::string, std::vector<LeaderboardRow>> sLbCache;
+
+const std::vector<LeaderboardRow>* GetCachedLeaderboard(const std::string& courseId) {
+    std::lock_guard<std::mutex> lock(sLbMtx);
+    const auto it = sLbCache.find(courseId);
+    return it == sLbCache.end() ? nullptr : &it->second;
+}
+
+void SetCachedLeaderboard(const std::string& courseId, std::vector<LeaderboardRow> rows) {
+    std::lock_guard<std::mutex> lock(sLbMtx);
+    sLbCache[courseId] = std::move(rows);
+}
+
+// ── Chat incoming queue ──────────────────────────────────────────────────────
+static std::mutex sChatMtx;
+static std::vector<LeaderboardRow> sLbUnused; // suppress unused warning for sLbMtx type
+static std::vector<IncomingChatMessage> sIncomingChat;
+
+std::vector<IncomingChatMessage> DrainIncomingChat() {
+    std::lock_guard<std::mutex> lock(sChatMtx);
+    std::vector<IncomingChatMessage> out;
+    out.swap(sIncomingChat);
+    return out;
 }
 
 Client::~Client() {
@@ -107,6 +155,38 @@ void Client::SendRaw(const std::string& route, const void* data, size_t size) {
     frame.insert(frame.end(), bytes, bytes + size);
 
     mWs.sendBinary(std::string(frame.begin(), frame.end()));
+}
+
+bool Client::RequestJson(const std::string& route, const std::string& jsonBody,
+                         int16_t& outStatus, std::string& outBody) {
+    // Serialize WS requests so each reply matches its in-flight caller (no stray
+    // replies get routed to subscription OnPush handlers).
+    std::lock_guard<std::mutex> reqLock(mReqMtx);
+    if (mWs.getReadyState() != ix::ReadyState::Open) {
+        return false;
+    }
+
+    const auto frame = buildJsonRequest(route, jsonBody);
+    {
+        std::unique_lock<std::mutex> lock(mMtx);
+        mResponseReady = false;
+        mResponseValid = false;
+        mWaitingForResponse = true;
+    }
+
+    mWs.sendBinary(std::string(frame.begin(), frame.end()));
+
+    std::unique_lock<std::mutex> lock(mMtx);
+    mCv.wait_for(lock, std::chrono::seconds(10), [this] { return mResponseReady; });
+    mWaitingForResponse = false;
+
+    if (!mResponseValid) {
+        SPDLOG_WARN("SatellaClient: no valid response for '{}'", route);
+        return false;
+    }
+    outStatus = mResponseStatus;
+    outBody = mResponseBody;
+    return true;
 }
 
 void Client::OnMessage(const ix::WebSocketMessagePtr& msg) {
@@ -199,7 +279,14 @@ void Client::Connect(const std::string& url) {
     }
 
     mUrl = url;
-    mWs.setUrl(url + "/ws?v=" GHOSTSHIP_VERSION);
+    std::string wsUrl = url + "/ws?v=" GHOSTSHIP_VERSION;
+    // Authenticate the socket so the /v1/satella/* data routes resolve the
+    // user (mirrors the REST bearer token — backend reads ?token= on upgrade).
+    const std::string token = SatellaAuth::GetToken();
+    if (!token.empty()) {
+        wsUrl += "&token=" + token;
+    }
+    mWs.setUrl(wsUrl);
 #if defined(__linux__)
     mWs.setTLSOptions(BuildTLSOptions());
 #endif
@@ -396,7 +483,78 @@ class NotificationsPacket : public IPacket {
         SPDLOG_INFO("SatellaClient: subscribed to notifications");
     }
     void OnPush(int16_t status, uint8_t packetType, const std::string& body) override {
-        if (status != 200 || packetType != 0x02 || body.empty()) {
+        if (status != 200 || body.empty()) {
+            return;
+        }
+
+        // Relay RAW push (type 0x03) — try to parse as a chat message.
+        if (packetType == 0x03) {
+            try {
+                auto chat = nlohmann::json::parse(body);
+                if (chat.contains("channelId") && chat.contains("from") && chat.contains("text")) {
+                    {
+                        std::lock_guard<std::mutex> lock(sChatMtx);
+                        IncomingChatMessage msg{
+                            chat["channelId"].get<std::string>(),
+                            chat["from"].get<std::string>(),
+                            chat["text"].get<std::string>(),
+                            chat.value("ts", static_cast<int64_t>(0)),
+                            chat.value("alias", chat.value("from", "Satella")),
+                            chat.value("accentColor", 0),
+                            chat.value("avatarUrl", ""),
+                        };
+                        sIncomingChat.push_back(std::move(msg));
+                    }
+                    // Fire an enhanced notification with the sender's identity.
+                    const IncomingChatMessage& last = sIncomingChat.back();
+                    // Never show the raw ULID — fall back to "Satella" if alias is empty.
+                    const std::string alias = last.alias.empty() ? "Satella" : last.alias;
+                    const int accent = last.accentColor;
+                    const std::string fromId = last.from;
+                    const std::string avatarUrl = last.avatarUrl;
+                    const std::string avatarKey = "avatar_" + fromId;
+
+                    // Trigger async avatar download (idempotent — no-op if cached/loading).
+                    if (!avatarUrl.empty()) {
+                        SatellaRequestAvatar(avatarUrl, avatarKey);
+                    }
+
+                    // Convert accent integer (0xRRGGBB) to ImVec4. If 0 (unset/black),
+                    // default to gold so the prefix + border are visible on the dark card.
+                    const ImVec4 accentVec = (accent != 0)
+                        ? ImVec4(
+                            ((accent >> 16) & 0xFF) / 255.0f,
+                            ((accent >> 8) & 0xFF) / 255.0f,
+                            (accent & 0xFF) / 255.0f,
+                            1.0f)
+                        : ImVec4(1.0f, 0.85f, 0.0f, 1.0f); // gold fallback
+
+                    Notification::Options opts;
+                    opts.prefix = alias.empty() ? "Satella" : alias;
+                    opts.prefixColor = ImVec4(1.0f, 0.85f, 0.0f, 1.0f); // Always yellow — readable on dark bg regardless of accent
+                    opts.borderColor = accentVec; // Sender's accent color on the border only
+                    opts.message = chat["text"].get<std::string>();
+                    opts.messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+                    opts.isAchievement = true;
+                    // Store the avatar key persistently so the const char* survives.
+                    // Keys are bounded (friends only) and small — a set is fine.
+                    static std::set<std::string> sAvatarKeys;
+                    if (SatellaHasAvatar(avatarKey)) {
+                        auto [it, _] = sAvatarKeys.insert(avatarKey);
+                        opts.itemIcon = it->c_str();
+                    } else {
+                        opts.itemIcon = nullptr;
+                    }
+                    Notification::Emit(opts);
+                }
+            } catch (const std::exception& e) {
+                SPDLOG_WARN("SatellaClient: failed to parse relay push: {}", e.what());
+            }
+            return;
+        }
+
+        // JSON push (type 0x02) — leaderboard or notification.
+        if (packetType != 0x02) {
             return;
         }
 
@@ -404,10 +562,30 @@ class NotificationsPacket : public IPacket {
         try {
             data = nlohmann::json::parse(body);
         } catch (const std::exception& e) {
-            SPDLOG_WARN("SatellaClient: failed to parse notification push: {}", e.what());
+            SPDLOG_WARN("SatellaClient: failed to parse push: {}", e.what());
             return;
         }
 
+        const std::string type = data.value("type", "notification");
+
+        // Live leaderboard refresh — cache per course for the in-game tab.
+        if (type == "leaderboard") {
+            const std::string courseId = data.value("courseId", "");
+            if (courseId.empty() || !data.contains("entries") || !data["entries"].is_array()) {
+                return;
+            }
+            std::vector<LeaderboardRow> rows;
+            for (const auto& e : data["entries"]) {
+                LeaderboardRow row;
+                row.username = e.value("username", e.value("alias", "?"));
+                row.timeMs = e.value("time", static_cast<int64_t>(0));
+                rows.push_back(std::move(row));
+            }
+            SetCachedLeaderboard(courseId, std::move(rows));
+            return;
+        }
+
+        // Default: in-game toast notification.
         Notification::Options opts;
         if (data.contains("prefix") && data["prefix"].is_string())
             opts.prefix = data["prefix"].get<std::string>();
@@ -417,6 +595,11 @@ class NotificationsPacket : public IPacket {
             opts.suffix = data["suffix"].get<std::string>();
         if (data.contains("duration") && data["duration"].is_number())
             opts.remainingTime = data["duration"].get<float>();
+        // Render through the enhanced "achievement-style" path when the server
+        // opts in (e.g. admin broadcasts) — same renderer as achievement unlocks
+        // + chat (coloured border, large prefix, text wrap).
+        if (data.contains("isAchievement") && data["isAchievement"].is_boolean())
+            opts.isAchievement = data["isAchievement"].get<bool>();
 
         Notification::Emit(opts);
     }

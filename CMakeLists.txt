@@ -506,6 +506,7 @@ if(USE_NETWORKING AND NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch" AND NOT CM
     set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(ixwebsocket)
     target_link_libraries(${PROJECT_NAME} PRIVATE ixwebsocket)
+    target_link_libraries(${PROJECT_NAME} PRIVATE stb)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         USE_NETWORKING
         GHOSTSHIP_VERSION="${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}"

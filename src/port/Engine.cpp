@@ -20,6 +20,10 @@
 #include "audio/GameAudio.h"
 #include "texts_table.h"
 #include "port/ui/cvar_prefixes.h"
+#ifdef USE_NETWORKING
+#include "port/net/SatellaAchievementSync.h"
+#include "port/net/SatellaPresence.h"
+#endif
 #include "port/mods/PortEnhancements.h"
 #include "port/events/Events.h"
 #include "port/console/DevConsole.h"
@@ -63,6 +67,8 @@
 #include "port/mods/utils/GfxPrint.h"
 #include <ship/resource/archive/Archive.h>
 #include "port/net/SatellaClient.h"
+#include "port/net/SatellaApi.h"
+#include "port/ui/SatellaWindow.h"
 
 #ifdef __SWITCH__
 #include <ship/port/switch/SwitchImpl.h>
@@ -872,7 +878,15 @@ void GameEngine::RunExtract(int argc, char* argv[]) {
 #ifdef USE_NETWORKING
                 if (CVarGetInteger(CVAR_DEVELOPER_TOOLS("Satella"), 1) == 1) {
                     threadPool->submit_task([&]() -> void {
-                        Satella::Client::Instance().Execute();
+                        Satella::Client::Instance().Execute(Satella::WsHost());
+                        // Force-fetch the profile (alias, accent, avatar, ulid) so
+                        // chat messages carry the sender's identity from the start.
+                        SatellaFetchSelfProfile();
+                        // Once the WS relay is up, reconcile achievements and
+                        // start reporting presence over the parallel HTTP layer.
+                        SatellaAchievementSync::FlushAll();
+                        SatellaAchievementSync::SubscribeFriendChannels();
+                        SatellaPresence::Start();
                         extractStep = GS_LOAD;
                     });
                     extractStep = GS_WAIT;
@@ -1133,6 +1147,9 @@ void GameEngine::Create(int argc, char* argv[]) {
 
 void GameEngine::Destroy() {
     GhostshipGui::Destroy();
+#ifdef USE_NETWORKING
+    SatellaPresence::Stop();
+#endif
     gsFast3dWindow = nullptr;
     AudioExit();
 #ifdef __SWITCH__

@@ -1,5 +1,12 @@
 // racing_penguin.inc.c
 
+#ifdef USE_NETWORKING
+#include "port/net/SatellaApi.h"
+// obj_begin_race(TRUE) skips the shared HUD timer, so the penguin race has no
+// finish-time variable. Track elapsed frames via the penguin object's own timer.
+static s32 sPenguinRaceStartFrame = 0;
+#endif
+
 struct RacingPenguinData {
     s16 text;
     f32 radius;
@@ -54,6 +61,9 @@ static void racing_penguin_act_prepare_for_race(void) {
     if (obj_begin_race(TRUE)) {
         o->oAction = RACING_PENGUIN_ACT_RACE;
         o->oForwardVel = 20.0f;
+#ifdef USE_NETWORKING
+        sPenguinRaceStartFrame = o->oTimer;
+#endif
     }
 
     cur_obj_rotate_yaw_toward(0x4000, 2500);
@@ -190,6 +200,16 @@ void bhv_penguin_race_finish_line_update(void) {
          || (o->oDistanceToMario < 1000.0f && gMarioObject->oPosZ - o->oPosZ < 0.0f))
         && !o->parentObj->oRacingPenguinReachedBottom) {
         o->parentObj->oRacingPenguinMarioWon = TRUE;
+#ifdef USE_NETWORKING
+        // o is the finish-line object; parentObj is the racing penguin whose
+        // oTimer we captured at the start. Skip shortcut/air-time cheaters.
+        if (!o->parentObj->oRacingPenguinMarioCheated) {
+            const s32 elapsed = o->parentObj->oTimer - sPenguinRaceStartFrame;
+            if (elapsed > 0) {
+                Satella_SubmitRaceTime(SATELLA_COURSE_CCM_PENGUIN, (unsigned int)elapsed);
+            }
+        }
+#endif
     }
 }
 

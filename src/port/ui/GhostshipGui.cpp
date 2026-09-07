@@ -16,6 +16,9 @@ void C_RunGuiDrawCallbacks();
 #include "SaveEditor.h"
 #include "port/ui/ObjectViewer.h"
 #include "port/ui/AchievementsWindow.h"
+#ifdef USE_NETWORKING
+#include "port/ui/SatellaWindow.h"
+#endif
 #include "port/Rando/CheckTracker/CheckTracker.h"
 #include "port/Rando/EntranceTracker/EntranceTracker.h"
 
@@ -53,6 +56,9 @@ std::shared_ptr<GhostshipModalWindow> mModalWindow;
 std::shared_ptr<ObjectViewer> mObjectViewer;
 std::shared_ptr<Ship::GuiWindow> mConsoleWindow;
 std::shared_ptr<AchievementsWindow> mAchievementsWindow;
+#ifdef USE_NETWORKING
+std::shared_ptr<SatellaWindow> mSatellaWindow;
+#endif
 std::shared_ptr<Ship::EventDebuggerWindow> mEventDebuggerWindow;
 std::shared_ptr<LUS::GfxDebuggerWindow> mGfxDebuggerWindow;
 std::shared_ptr<Ship::ShaderSettingsWindow> mShaderSettingsWindow;
@@ -90,6 +96,11 @@ void SetupGuiElements() {
 
     mAchievementsWindow = std::make_shared<AchievementsWindow>(CVAR_WINDOW("Achievements"), "Achievements");
     gui->AddGuiWindow(mAchievementsWindow);
+
+#ifdef USE_NETWORKING
+    mSatellaWindow = std::make_shared<SatellaWindow>(CVAR_WINDOW("Satella"), "Satella");
+    gui->AddGuiWindow(mSatellaWindow);
+#endif
 
     mEventDebuggerWindow = std::make_shared<Ship::EventDebuggerWindow>(CVAR_WINDOW("EventDebugger"), "Event Debugger");
     gui->AddGuiWindow(mEventDebuggerWindow);
@@ -168,6 +179,9 @@ void Destroy() {
     mObjectViewer = nullptr;
     mShaderSettingsWindow = nullptr;
     mGfxDebuggerWindow = nullptr;
+#ifdef USE_NETWORKING
+    mSatellaWindow = nullptr;
+#endif
 }
 
 void RegisterPopup(std::string title, std::string message, std::string button1, std::string button2,

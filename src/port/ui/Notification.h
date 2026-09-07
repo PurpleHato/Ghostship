@@ -19,6 +19,7 @@ struct Options {
     float remainingTime = 0.0f; // Seconds
     bool mute = false;
     bool isAchievement = false; // Simple flag for achievement notifications
+    ImVec4 borderColor = ImVec4(1.0f, 0.85f, 0.0f, 1.0f); // Gold default for achievements; chat overrides with accent
 };
 
 class Window : public Ship::GuiWindow {

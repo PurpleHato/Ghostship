@@ -20,6 +20,10 @@
 #include "game/object_list_processor.h"
 #include "game/main.h"
 #include "ship/window/gui/resource/GuiTexture.h"
+#ifdef USE_NETWORKING
+#include "port/net/AntiCheat.h"
+#include "port/net/SatellaApi.h"
+#endif
 
 static size_t order = 0;
 static int16_t selectedFile = 0;
@@ -164,6 +168,9 @@ void Achievement_Progress(const std::string& id, const int32_t amount) {
             if (progress >= achievement->maxProgress) {
                 achieved = true;
                 Notification::EmitAchievement(achievement->icon, achievement->name, 0);
+#ifdef USE_NETWORKING
+                Satella_QueueAchievement(id.c_str());
+#endif
             } else {
                 SPDLOG_INFO("Progressed achievement {}: {}/{}", achievement->name, progress, achievement->maxProgress);
             }
@@ -196,6 +203,9 @@ void Achievement_ProgressByCategory(AchievementCategory category, int32_t amount
                 if (progress >= achievement.maxProgress) {
                     achieved = true;
                     Notification::EmitAchievement(achievement.icon, achievement.name, 0);
+#ifdef USE_NETWORKING
+                    Satella_QueueAchievement(id.c_str());
+#endif
                 }
 
                 // Save after each achievement progress update to prevent loss of progress on crash
@@ -206,6 +216,32 @@ void Achievement_ProgressByCategory(AchievementCategory category, int32_t amount
 
 AchievementProgress* Achievement_GetProgress(const std::string& id) {
     return &gAchievementProgress[id];
+}
+
+void Achievement_SetAchievedSilent(const std::string& id) {
+    const Achievement* achievement = Achievement_FindByID(id);
+    if (achievement == nullptr) {
+        return;
+    }
+    auto& [progress, achieved] = gAchievementProgress[id];
+    if (achieved) {
+        return;
+    }
+    achieved = true;
+    progress = achievement->maxProgress;
+}
+
+void Achievement_SetProgressSilent(const std::string& id, int32_t newProgress) {
+    const Achievement* achievement = Achievement_FindByID(id);
+    if (achievement == nullptr) {
+        return;
+    }
+    auto& [progress, achieved] = gAchievementProgress[id];
+    if (achieved) {
+        return;
+    }
+    // Only set progress; do NOT mark achieved or queue a sync.
+    progress = std::min(newProgress, achievement->maxProgress);
 }
 
 void Achievement_LoadTexture(const std::string& id) {
@@ -277,7 +313,11 @@ void Achievements_Save(IEvent* event) {
 
     AchievementSaveData* saveData = &gSaveBuffer.files[selectedFile]->shipSaveData.achievementSaveData;
 
-    saveData->cheated = false; // TODO: Implement cheat detection
+#ifdef USE_NETWORKING
+    saveData->cheated = !AntiCheat::IsCleanSession();
+#else
+    saveData->cheated = false;
+#endif
 
     if (!saveData->cheated) {
         size_t index = 0;

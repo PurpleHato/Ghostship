@@ -49,4 +49,15 @@ extern std::unordered_map<std::string, AchievementProgress> gAchievementProgress
 
 extern AchievementProgress* Achievement_GetProgress(const std::string& id);
 extern void                 Achievement_Progress(const std::string& id, int32_t amount = 1);
+
+/* Mark an achievement achieved + progress=max WITHOUT emitting a notification
+ * or queueing a Satella sync — used by the sync-first restore (apply the
+ * server's known unlocks to a fresh / deleted local save). No-op if the id is
+ * unknown or already achieved. */
+extern void                 Achievement_SetAchievedSilent(const std::string& id);
+
+/* Set partial progress WITHOUT marking achieved or queueing a sync — used by
+ * the sync-first restore to recover count-based progress (e.g. 50/100 jumps)
+ * from the server after a fresh install. */
+extern void                 Achievement_SetProgressSilent(const std::string& id, int32_t progress);
 #endif

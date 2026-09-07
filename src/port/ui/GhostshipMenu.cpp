@@ -2,6 +2,9 @@
 #include "GhostshipInputEditorWindow.h"
 #include <ship/window/gui/GuiMenuBar.h>
 #include <ship/window/gui/GuiElement.h>
+#ifdef USE_NETWORKING
+#include "port/ui/SatellaWindow.h"
+#endif
 #include <variant>
 #include <ship/utils/StringHelper.h>
 #include <spdlog/fmt/fmt.h>
@@ -141,12 +144,102 @@ GhostshipMenu::GhostshipMenu(const std::string& consoleVariable, const std::stri
     : Menu(consoleVariable, name, 0, UIWidgets::Colors::LightBlue) {
 }
 
+void GhostshipMenu::AddMenuSatella() {
+    AddMenuEntry("Satella", CVAR_SETTING("Menu.SatellaSidebarSection"));
+
+    // ── Account ── (identity, login, dev settings)
+    {
+        WidgetPath path = { "Satella", "Account", SECTION_COLUMN_1 };
+        AddSidebarEntry("Satella", path.sidebarName, 1);
+
+        AddWidget(path, "Enable Achievements", WIDGET_CVAR_CHECKBOX)
+            .CVar(CVAR_ENHANCEMENT("Achievements"))
+            .RaceDisable(false)
+            .Options(CheckboxOptions().Tooltip(
+                "Enables the achievement system."));
+
+#ifdef USE_NETWORKING
+        AddWidget(path, "Account Panel", WIDGET_SEPARATOR)
+            .PreFunc([](WidgetInfo& info) {
+                info.isHidden = true;
+                DrawSatellaConnect();
+            });
+#endif
+    }
+
+#ifdef USE_NETWORKING
+    // ── Achievements ──
+    {
+        WidgetPath path = { "Satella", "Achievements", SECTION_COLUMN_1 };
+        AddSidebarEntry("Satella", path.sidebarName, 1);
+
+        AddWidget(path, "Achievements Panel", WIDGET_SEPARATOR)
+            .PreFunc([](WidgetInfo& info) {
+                info.isHidden = true;
+                DrawSatellaAchievements();
+            });
+    }
+
+    // ── Badges ──
+    {
+        WidgetPath path = { "Satella", "Badges", SECTION_COLUMN_1 };
+        AddSidebarEntry("Satella", path.sidebarName, 1);
+
+        AddWidget(path, "Badges Panel", WIDGET_SEPARATOR)
+            .PreFunc([](WidgetInfo& info) {
+                info.isHidden = true;
+                DrawSatellaBadges();
+            });
+    }
+
+    // ── Friends ──
+    {
+        WidgetPath path = { "Satella", "Friends", SECTION_COLUMN_1 };
+        AddSidebarEntry("Satella", path.sidebarName, 1);
+
+        AddWidget(path, "Friends Panel", WIDGET_SEPARATOR)
+            .PreFunc([](WidgetInfo& info) {
+                info.isHidden = true;
+                DrawSatellaFriends();
+            });
+    }
+
+    // ── Profile ──
+    {
+        WidgetPath path = { "Satella", "Profile", SECTION_COLUMN_1 };
+        AddSidebarEntry("Satella", path.sidebarName, 1);
+
+        AddWidget(path, "Profile Panel", WIDGET_SEPARATOR)
+            .PreFunc([](WidgetInfo& info) {
+                info.isHidden = true;
+                DrawSatellaProfile();
+            });
+    }
+
+    // ── Leaderboard ──
+    {
+        WidgetPath path = { "Satella", "Leaderboard", SECTION_COLUMN_1 };
+        AddSidebarEntry("Satella", path.sidebarName, 1);
+
+        AddWidget(path, "Leaderboard Panel", WIDGET_SEPARATOR)
+            .PreFunc([](WidgetInfo& info) {
+                info.isHidden = true;
+                DrawSatellaLeaderboard();
+            });
+    }
+#endif
+}
+
 void GhostshipMenu::InitElement() {
     Ship::Menu::InitElement();
     AddMenuSettings();
     AddMenuEnhancements();
     AddMenuRando();
+#ifdef USE_NETWORKING
+    AddMenuSatella();
+#else
     AddMenuAchievements();
+#endif
     AddMenuDevTools();
 #ifndef __SWITCH__
     AddModMenu();

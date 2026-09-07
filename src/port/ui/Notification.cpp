@@ -155,7 +155,7 @@ void Window::DrawEnhancedNotification(const Options& notification, ImVec2 basePo
 
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.12f, 0.95f)); // Darker, more opaque
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.85f, 0.0f, 1.0f));      // Gold border
+    ImGui::PushStyleColor(ImGuiCol_Border, notification.borderColor);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 12.0f));
@@ -189,8 +189,23 @@ void Window::DrawEnhancedNotification(const Options& notification, ImVec2 basePo
         float contentStartY = ImGui::GetCursorPosY();
         float iconOffsetY = MAX(0.0f, (totalTextHeight - iconSize) * 0.5f);
 
-        // Position and draw icon
+        // Position and draw icon with accent-colored bloom behind it.
         ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX(), contentStartY + iconOffsetY));
+        {
+            // Bloom: a filled rounded rect in the sender's accent color, slightly
+            // larger than the icon, creating a glow halo around the avatar.
+            ImVec2 iconPos = ImGui::GetCursorScreenPos();
+            float bloomPad = 4.0f;
+            ImVec2 bloomMin(iconPos.x - bloomPad, iconPos.y - bloomPad);
+            ImVec2 bloomMax(iconPos.x + iconSize + bloomPad, iconPos.y + iconSize + bloomPad);
+            ImU32 bloomCol = IM_COL32(
+                (uint8_t)(notification.borderColor.x * 255),
+                (uint8_t)(notification.borderColor.y * 255),
+                (uint8_t)(notification.borderColor.z * 255),
+                90 // ~35% alpha for the glow
+            );
+            ImGui::GetWindowDrawList()->AddRectFilled(bloomMin, bloomMax, bloomCol, 8.0f);
+        }
         ImGui::Image(std::static_pointer_cast<Fast::Fast3dGui>(Ship::Context::GetInstance()->GetWindow()->GetGui())
                          ->GetTextureByName(notification.itemIcon),
                      ImVec2(iconSize, iconSize));

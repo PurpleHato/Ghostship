@@ -43,6 +43,14 @@ public:
     // No-op if the socket is not open.
     void SendRaw(const std::string& route, const void* data, size_t size);
 
+    // Blocking JSON request/response over the (authed) WS socket: frames
+    // HM64 + JSON type + route + body, awaits the server reply. Serialized by
+    // an internal request mutex so only one request is in flight at a time
+    // (prevents stray replies from being misrouted). Returns false if the
+    // socket isn't open or no reply arrived within the timeout.
+    bool RequestJson(const std::string& route, const std::string& jsonBody,
+                     int16_t& outStatus, std::string& outBody);
+
 private:
     Client() = default;
     ~Client();
@@ -58,6 +66,8 @@ private:
 
     std::mutex              mMtx;
     std::condition_variable mCv;
+    // Serializes RequestJson callers so replies always match the in-flight req.
+    std::mutex              mReqMtx;
 
     std::atomic<Phase> mPhase{ Phase::Idle };
 
@@ -68,6 +78,28 @@ private:
     int16_t mResponseStatus     = 0;
     std::string mResponseBody;
 };
+
+// Minimal leaderboard row cached from the live WS push; SatellaWindow reads it.
+struct LeaderboardRow {
+    std::string username;
+    int64_t timeMs = 0;
+};
+// Per-course live cache, updated by the leaderboard broadcast-on-submit push.
+const std::vector<LeaderboardRow>* GetCachedLeaderboard(const std::string& courseId);
+void SetCachedLeaderboard(const std::string& courseId, std::vector<LeaderboardRow> rows);
+
+// ── Chat (ephemeral, relay-based) ────────────────────────────────────────────
+struct IncomingChatMessage {
+    std::string channelId;
+    std::string from;
+    std::string text;
+    int64_t ts = 0;
+    std::string alias;
+    int accentColor = 0;
+    std::string avatarUrl;
+};
+// Drain the incoming chat queue (called by SatellaWindow each frame).
+std::vector<IncomingChatMessage> DrainIncomingChat();
 
 template<typename T>
 struct PacketAutoReg {
